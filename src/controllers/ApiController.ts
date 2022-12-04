@@ -6,6 +6,7 @@ import { UnknownError } from '../utils/errors/UnknownError';
 import { ControllerSuccess } from '../utils/types/ControllerResponses/ControllerSuccess';
 import {
   CompareStockBySymbols,
+  EndpointsResponseTypes,
   GetProjectedGains,
   GetStockBySymbol,
   GetStockHistoryBySymbol,
@@ -29,26 +30,38 @@ export class ApiController {
     return ApiController.instance;
   }
 
+  private createErrorObject(errors: BaseError | BaseError[]): BaseError[] {
+    if ('length' in errors) {
+      return errors;
+    } else {
+      return [errors];
+    }
+  }
+
+  private createSuccessObject<EndpointsResponseTypes>(result: EndpointsResponseTypes) {
+    return new ControllerSuccess(result);
+  }
+
   async getStockBySymbol(stock_name: string): Promise<ControllerSuccess<GetStockBySymbol> | BaseError[]> {
     const validationErrors = ParameterValidator.getValidationErrors([ValidatationTypes.STRING, { stock_name }]);
     if (validationErrors !== undefined) {
-      return validationErrors;
+      return this.createErrorObject(validationErrors);
     }
 
     try {
       const result = await this.yahooApiService.getStockBySymbol(stock_name);
 
-      return new ControllerSuccess({
+      return this.createSuccessObject<GetStockBySymbol>({
         name: result.symbol,
         lastPrice: result.regularMarketPrice,
         pricedAt: new Date(Number(result.regularMarketTime.toString() + '000')).toISOString(),
       });
     } catch (err: any) {
-      if (err.code === 'Not Found') {
-        return [new NotFoundError({ stock_name })];
-      } else {
-        return [new UnknownError()];
-      }
+      const isANotFoundError: boolean = err.code === 'Not Found';
+
+      return isANotFoundError
+        ? this.createErrorObject(new NotFoundError({ stock_name }))
+        : this.createErrorObject(new UnknownError());
     }
   }
 
@@ -56,12 +69,11 @@ export class ApiController {
     stock_name: string,
     stocks: string[]
   ): Promise<ControllerSuccess<CompareStockBySymbols> | BaseError[]> {
-    //no need for validation, getstockbysymbol already does it.
-    const stocksArray = [stock_name, ...stocks];
+    //No need for validation, getstockbysymbol already does it.
     const successArray: GetStockBySymbol[] = [];
     const errorArray: BaseError[] = [];
 
-    for (const stock of stocksArray) {
+    for (const stock of [stock_name, ...stocks]) {
       const result = await this.getStockBySymbol(stock);
 
       if (result instanceof ControllerSuccess) {
@@ -71,10 +83,11 @@ export class ApiController {
       }
     }
 
-    const hasAnyErrors = errorArray.length > 0;
-    if (hasAnyErrors) return errorArray;
+    const hasErrors = errorArray.length > 0;
 
-    return new ControllerSuccess({ lastPrices: successArray });
+    return hasErrors
+      ? this.createErrorObject(errorArray)
+      : this.createSuccessObject<CompareStockBySymbols>({ lastPrices: successArray });
   }
 
   async getStockHistoryBySymbol(
@@ -94,7 +107,7 @@ export class ApiController {
     );
 
     if (validationErrors !== undefined) {
-      return validationErrors;
+      return this.createErrorObject(validationErrors);
     }
 
     return this.alphaApiService
