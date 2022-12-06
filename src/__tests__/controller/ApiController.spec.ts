@@ -1,9 +1,9 @@
 import { NotFoundError } from '../../utils/errors/NotFoundError';
+import { UnknownError } from '../../utils/errors/UnknownError';
 import { ControllerSuccess } from '../../utils/types/ControllerResponses/ControllerSuccess';
+import { getDefaultResponseForMockedAlphaApiAsObject } from '../utils/mockAlphaService/mockAlphaService';
 import { getMoockedApiController } from '../utils/mockApiController';
-import { defaultResponseForMockedYahooApi } from '../utils/mockYahooService';
-
-jest.setTimeout(10000);
+import { defaultResponseForMockedYahooApi, expectedGainsForDefaultResponse } from '../utils/mockYahooService';
 
 describe('ApiController', () => {
   const moockedController = getMoockedApiController();
@@ -103,18 +103,16 @@ describe('ApiController', () => {
   test('projectGains - should return gains', async () => {
     const purchasedAmount = '10';
     const purchasedAt = '2022-11-22';
-    const priceAtDate = 149.1;
-    const totalPayed = Number(purchasedAmount) * priceAtDate;
-    const totalEarned = Number(purchasedAmount) * defaultResponseForMockedYahooApi.regularMarketPrice;
-    const expectedGains = totalEarned - totalPayed;
+    const priceAtDate = getDefaultResponseForMockedAlphaApiAsObject()[purchasedAt]['4. close'];
+
     const result = await moockedController.projectGains('ibm', purchasedAmount, purchasedAt);
 
     expect(result).toMatchObject({
       result: {
-        capitalGains: expectedGains,
+        capitalGains: expectedGainsForDefaultResponse(purchasedAmount, priceAtDate),
         lastPrice: 12.02,
         name: 'IBM',
-        priceAtDate,
+        priceAtDate: Number(priceAtDate),
         purchasedAmount: 10,
         purchasedAt: '2022-11-22T00:00:00.000Z',
       },

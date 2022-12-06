@@ -7,6 +7,12 @@ export const defaultResponseForMockedYahooApi: YahooApiUsefullInfo = {
   regularMarketTime: new Date('2000-01-01').valueOf(),
 };
 
+export function expectedGainsForDefaultResponse(purchasedAmount: string, priceAtDate: number) {
+  const totalPayed = Number(purchasedAmount) * priceAtDate;
+  const totalEarned = Number(purchasedAmount) * defaultResponseForMockedYahooApi.regularMarketPrice;
+  return totalEarned - totalPayed;
+}
+
 export function getMoockedYahooService(): YahooApiService {
   const moockedYahooService = {
     getStockBySymbol: async (stock_name: string) => {

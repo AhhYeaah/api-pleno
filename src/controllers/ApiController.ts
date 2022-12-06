@@ -110,103 +110,89 @@ export class ApiController {
       return this.createErrorObject(validationErrors);
     }
 
-    return this.alphaApiService
-      .getStockLimitedHistoryBySymbol(stock_name)
-      .then(async (result) => {
-        /**
-         * - The stream containing the result is displayed decreassingly, like this
-         * "2022-01-03": { ... }, "2022-01-02": { ... }, "2022-01-01": { ... }
-         *
-         * - We can notice that the "to" date is always the first to appear since it is, by
-         * definition, earlier than the "from" one.
-         * - So my strategy here is to read the stream line by line, and ignore it,  until the
-         * "to" date has been found.
-         * - After that, we can start reading ( adding the lines to a string ) until we find
-         * the the "from" date.
-         * - And then, we can start ending ( adding the last object to the string ) end the stream.
-         *
-         * We then convert the string to a JSON Object and there you have it.
-         **/
+    try {
+      const historyStream = await this.alphaApiService.getStockHistoryAsStream(stock_name);
 
-        let reading = false;
-        let ending = false;
-        let stringResult = '{';
-        const toDate = new Date(to).toISOString().split('T')[0];
-        const fromDate = new Date(from).toISOString().split('T')[0];
+      let searchingState = { reading: false, ending: false };
+      let stringResult = '{';
 
-        result.on('data', (lineBuffer: Buffer) => {
-          const line = lineBuffer.toString();
+      const firstDateToAppearInStream = new Date(to).toISOString().split('T')[0];
+      const lastDateToAppearInList = new Date(from).toISOString().split('T')[0];
 
-          const hasError = line.includes('Error Message');
-          if (hasError) {
-            result.pause();
-          }
+      historyStream.on('data', (lineBuffer: Buffer) => {
+        const line = lineBuffer.toString();
 
-          const isTheStartOfToObject: boolean = line.includes(toDate) && line.includes('{'); // "date": {
+        const hasError = line.includes('Error Message');
+        if (hasError) {
+          historyStream.pause();
+        }
 
-          if (isTheStartOfToObject) {
-            reading = true;
-          }
+        const foundStartOfWantedInterval: boolean = line.includes(firstDateToAppearInStream) && line.includes('{'); // "date": {
 
-          if (!reading) {
-            return; //ignore
-          }
+        if (foundStartOfWantedInterval) {
+          searchingState.reading = true;
+        }
 
-          const isTheStartOfFromObject: boolean = line.includes(fromDate) && line.includes('{'); // "date": {
+        const isNotUsefull = !searchingState.reading;
 
-          if (isTheStartOfFromObject) {
-            ending = true;
-          }
+        if (isNotUsefull) {
+          return;
+        }
 
-          if (reading) {
-            stringResult += line;
-          }
+        const foundEndOfWantedInterval: boolean = line.includes(lastDateToAppearInList) && line.includes('{'); // "date": {
 
-          const isEndOfTheLastObject: boolean = ending && line.includes('},');
-          if (isEndOfTheLastObject) {
-            //removing last comma
-            stringResult = stringResult.slice(0, -1);
-            result.pause();
-          }
-        });
+        if (foundEndOfWantedInterval) {
+          searchingState.ending = true;
+        }
 
-        return new Promise<ControllerSuccess<GetStockHistoryBySymbol> | BaseError[]>((resolve, _) => {
-          result.on('pause', () => {
-            stringResult += '}';
+        if (searchingState.reading) {
+          stringResult += line;
+        }
 
-            const hasError = stringResult === '{}';
-            if (hasError) {
-              resolve([new NotFoundError({ stock_name })]);
-            } else {
-              const rawPricesObj = JSON.parse(stringResult);
-
-              const pricesObj: HistoricPrices[] = Object.keys(rawPricesObj).map((key) => {
-                const saidObj = rawPricesObj[key];
-                return {
-                  opening: Number(saidObj['1. open']),
-                  high: Number(saidObj['2. high']),
-                  low: Number(saidObj['3. low']),
-                  closing: Number(saidObj['4. close']),
-                  pricedAt: new Date(key).toISOString(),
-                };
-              });
-
-              resolve(
-                new ControllerSuccess<GetStockHistoryBySymbol>({
-                  name: stock_name.toUpperCase(),
-                  prices: pricesObj,
-                })
-              );
-            }
-          });
-          result.on('end', () => {
-            resolve([new NotFoundError({ from }), new NotFoundError({ to })]);
-          });
-        });
-      })
-      .catch(() => {
-        return [new UnknownError()];
+        const isEndOfTheLastObject: boolean = searchingState.ending && line.includes('},');
+        if (isEndOfTheLastObject) {
+          //removing last comma
+          stringResult = stringResult.slice(0, -1);
+          historyStream.pause();
+        }
       });
+
+      return new Promise<ControllerSuccess<GetStockHistoryBySymbol> | BaseError[]>((resolve, _) => {
+        historyStream.on('pause', () => {
+          stringResult += '}';
+
+          const hasError = stringResult === '{}';
+          if (hasError) {
+            resolve([new NotFoundError({ stock_name })]);
+          } else {
+            const rawPricesObj = JSON.parse(stringResult);
+
+            const pricesObj: HistoricPrices[] = Object.keys(rawPricesObj).map((key) => {
+              const saidObj = rawPricesObj[key];
+              return {
+                opening: Number(saidObj['1. open']),
+                high: Number(saidObj['2. high']),
+                low: Number(saidObj['3. low']),
+                closing: Number(saidObj['4. close']),
+                pricedAt: new Date(key).toISOString(),
+              };
+            });
+
+            resolve(
+              new ControllerSuccess<GetStockHistoryBySymbol>({
+                name: stock_name.toUpperCase(),
+                prices: pricesObj,
+              })
+            );
+          }
+        });
+        historyStream.on('end', () => {
+          resolve([new NotFoundError({ from }), new NotFoundError({ to })]);
+        });
+      });
+    } catch (error) {
+      return this.createErrorObject(new UnknownError());
+    }
   }
 
   async projectGains(
