@@ -1,3 +1,4 @@
+import { LineStream } from 'byline';
 import { AlphaVantageApiService } from '../services/AlphaVantageApiService';
 import { YahooApiService } from '../services/YahooApiService';
 import { BaseError } from '../utils/errors/BaseError';
@@ -6,7 +7,6 @@ import { UnknownError } from '../utils/errors/UnknownError';
 import { ControllerSuccess } from '../utils/types/ControllerResponses/ControllerSuccess';
 import {
   CompareStockBySymbols,
-  EndpointsResponseTypes,
   GetProjectedGains,
   GetStockBySymbol,
   GetStockHistoryBySymbol,
@@ -112,86 +112,20 @@ export class ApiController {
 
     try {
       const historyStream = await this.alphaApiService.getStockHistoryAsStream(stock_name);
+      const prices = await new HistorySearcher().searchTimeIntervalInHistory(historyStream, from, to);
 
-      let searchingState = { reading: false, ending: false };
-      let stringResult = '{';
-
-      const firstDateToAppearInStream = new Date(to).toISOString().split('T')[0];
-      const lastDateToAppearInList = new Date(from).toISOString().split('T')[0];
-
-      historyStream.on('data', (lineBuffer: Buffer) => {
-        const line = lineBuffer.toString();
-
-        const hasError = line.includes('Error Message');
-        if (hasError) {
-          historyStream.pause();
-        }
-
-        const foundStartOfWantedInterval: boolean = line.includes(firstDateToAppearInStream) && line.includes('{'); // "date": {
-
-        if (foundStartOfWantedInterval) {
-          searchingState.reading = true;
-        }
-
-        const isNotUsefull = !searchingState.reading;
-
-        if (isNotUsefull) {
-          return;
-        }
-
-        const foundEndOfWantedInterval: boolean = line.includes(lastDateToAppearInList) && line.includes('{'); // "date": {
-
-        if (foundEndOfWantedInterval) {
-          searchingState.ending = true;
-        }
-
-        if (searchingState.reading) {
-          stringResult += line;
-        }
-
-        const isEndOfTheLastObject: boolean = searchingState.ending && line.includes('},');
-        if (isEndOfTheLastObject) {
-          //removing last comma
-          stringResult = stringResult.slice(0, -1);
-          historyStream.pause();
-        }
+      return new ControllerSuccess<GetStockHistoryBySymbol>({
+        name: stock_name.toUpperCase(),
+        prices: prices,
       });
-
-      return new Promise<ControllerSuccess<GetStockHistoryBySymbol> | BaseError[]>((resolve, _) => {
-        historyStream.on('pause', () => {
-          stringResult += '}';
-
-          const hasError = stringResult === '{}';
-          if (hasError) {
-            resolve([new NotFoundError({ stock_name })]);
-          } else {
-            const rawPricesObj = JSON.parse(stringResult);
-
-            const pricesObj: HistoricPrices[] = Object.keys(rawPricesObj).map((key) => {
-              const saidObj = rawPricesObj[key];
-              return {
-                opening: Number(saidObj['1. open']),
-                high: Number(saidObj['2. high']),
-                low: Number(saidObj['3. low']),
-                closing: Number(saidObj['4. close']),
-                pricedAt: new Date(key).toISOString(),
-              };
-            });
-
-            resolve(
-              new ControllerSuccess<GetStockHistoryBySymbol>({
-                name: stock_name.toUpperCase(),
-                prices: pricesObj,
-              })
-            );
-          }
-        });
-        historyStream.on('end', () => {
-          resolve([new NotFoundError({ from }), new NotFoundError({ to })]);
-        });
-      });
-    } catch (error) {
-      return this.createErrorObject(new UnknownError());
+    } catch (error: any) {
+      if (error === 'fromto') {
+        return this.createErrorObject([new NotFoundError({ from }), new NotFoundError({ to })]);
+      } else if (error === 'stock') {
+        return this.createErrorObject([new NotFoundError({ stock_name })]);
+      } else {
+        return this.createErrorObject(new UnknownError());
+      }
     }
   }
 
@@ -222,20 +156,15 @@ export class ApiController {
     if (todaysValue instanceof ControllerSuccess) {
       totalToday = todaysValue.getResult().lastPrice * Number(purchasedAmount);
     } else {
-      // The only case where there's two errors is when date is not found (to and from)
-      // In that case, im remodeling the error so it doesnt show as a weird "unknown to and from"
-      // parameter that the user have never sended.
-      const didNotFindDate = todaysValue[0] instanceof NotFoundError && todaysValue.length === 2;
-      if (didNotFindDate) {
-        return [new NotFoundError({ purchasedAt })];
-      }
       return todaysValue;
     }
 
     if (onDateValue instanceof ControllerSuccess) {
       totalOnDate = onDateValue.getResult().prices[0].closing * Number(purchasedAmount);
     } else {
-      //same thing
+      // The only case where there's two errors is when date is not found (to and from)
+      // In that case, im remodeling the error so it doesnt show as a weird "unknown to and from"
+      // parameter that the user have never sended.
       const didNotFindDate = onDateValue[0] instanceof NotFoundError && onDateValue.length === 2;
       if (didNotFindDate) {
         return [new NotFoundError({ purchasedAt })];
@@ -251,6 +180,122 @@ export class ApiController {
       purchasedAmount: Number(purchasedAmount),
       purchasedAt: new Date(purchasedAt).toISOString(),
       capitalGains: Number((totalToday - totalOnDate).toFixed(2)),
+    });
+  }
+}
+
+//idk where to put this ;-;
+class HistorySearcher {
+  private searchingState = { reading: false, ending: false };
+
+  private addLineToResult(result: { result: string }, line: string) {
+    result.result += line;
+  }
+
+  private isScanningThrougSearchingInterval() {
+    return this.searchingState.reading === true;
+  }
+
+  private removeLastCommaIfNecessary(result: { result: string }) {
+    if (result.result.endsWith(',')) {
+      result.result = result.result.slice(0, -1);
+    }
+  }
+
+  private startReading() {
+    this.searchingState.reading = true;
+  }
+
+  private startLookingForLastObject() {
+    this.searchingState.ending = true;
+  }
+
+  private shouldIgnoreForPerformance() {
+    return this.searchingState.reading === false;
+  }
+
+  private foundStartOfWantedInterval(line: string, firstDateToAppearInStream: string) {
+    return line.includes(firstDateToAppearInStream) && line.includes('{'); // "date": {
+  }
+  private finishedReadingLastObject(line: string) {
+    return this.searchingState.ending && line.includes('}');
+  }
+
+  private foundEndOfWantedInterval(line: string, lastDateToAppearInStream: string) {
+    return line.includes(lastDateToAppearInStream) && line.includes('{'); // "date": {
+  }
+
+  private didntFoundStockInDatabase(line: string) {
+    return line.includes('Error Message');
+  }
+
+  private getUnformatedJSONHistoryInterval(rawPricesObj: string) {
+    return JSON.parse(rawPricesObj);
+  }
+
+  private formatJSONHistoryObject(unformatedObject: any): HistoricPrices[] {
+    return Object.keys(unformatedObject).map((key) => {
+      const saidObj = unformatedObject[key];
+      return {
+        opening: Number(saidObj['1. open']),
+        high: Number(saidObj['2. high']),
+        low: Number(saidObj['3. low']),
+        closing: Number(saidObj['4. close']),
+        pricedAt: new Date(key).toISOString(),
+      };
+    });
+  }
+
+  async searchTimeIntervalInHistory(historyStream: LineStream, unformatedFromDate: string, unformatedToDate: string) {
+    const formatedToDate = new Date(unformatedToDate).toISOString().split('T')[0];
+    const formatedFromDate = new Date(unformatedFromDate).toISOString().split('T')[0];
+
+    const result = await this.scanStreamForTimeInterval(historyStream, formatedToDate, formatedFromDate);
+    const unformatedObject = this.getUnformatedJSONHistoryInterval(result);
+    return this.formatJSONHistoryObject(unformatedObject);
+  }
+
+  private async scanStreamForTimeInterval(
+    historyStream: LineStream,
+    firstDateToAppearInStream: string,
+    lastDateToAppearInStream: string
+  ) {
+    const result = { result: '{' }; //being a object in can pass it though
+
+    return new Promise<string>((resolve, reject) => {
+      historyStream.on('data', (lineBuffer: Buffer) => {
+        const line = lineBuffer.toString();
+
+        if (this.didntFoundStockInDatabase(line)) {
+          reject('stock');
+        }
+
+        if (this.foundStartOfWantedInterval(line, firstDateToAppearInStream)) {
+          this.startReading();
+        }
+
+        if (this.shouldIgnoreForPerformance()) {
+          return;
+        }
+
+        if (this.foundEndOfWantedInterval(line, lastDateToAppearInStream)) {
+          this.startLookingForLastObject();
+        }
+
+        if (this.isScanningThrougSearchingInterval()) {
+          this.addLineToResult(result, line);
+        }
+
+        if (this.finishedReadingLastObject(line)) {
+          this.removeLastCommaIfNecessary(result);
+          result.result += '}';
+          resolve(result.result);
+        }
+      });
+
+      historyStream.on('end', () => {
+        reject('fromto');
+      });
     });
   }
 }
