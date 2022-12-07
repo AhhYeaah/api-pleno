@@ -1,5 +1,4 @@
 import { NotFoundError } from '../../utils/errors/NotFoundError';
-import { UnknownError } from '../../utils/errors/UnknownError';
 import { ControllerSuccess } from '../../utils/types/ControllerResponses/ControllerSuccess';
 import { getDefaultResponseForMockedAlphaApiAsObject } from '../utils/mockAlphaService/mockAlphaService';
 import { getMoockedApiController } from '../utils/mockApiController';
@@ -82,14 +81,23 @@ describe('ApiController', () => {
     });
   });
 
-  test('getStockHistoryBySymbol - should not return last object', async () => {
+  test('getStockHistoryBySymbol - Regression - should return last object', async () => {
     //this is because it cant read the "}," if object is the last, since it will be replaced
     // by "}"
     const from = '2022-11-18';
     const to = '2022-11-22';
     const result = await moockedController.getStockHistoryBySymbol('ibm', from, to);
 
-    expect(result).toMatchObject([new NotFoundError({ from }), new NotFoundError({ to })]);
+    expect(result).toMatchObject({
+      result: {
+        name: 'IBM',
+        prices: [
+          { closing: 149.1, high: 149.35, low: 147.02, opening: 147.6, pricedAt: '2022-11-22T00:00:00.000Z' },
+          { closing: 146.68, high: 147.928, low: 146.45, opening: 147.55, pricedAt: '2022-11-21T00:00:00.000Z' },
+          { closing: 147.64, high: 148.31, low: 145.94, opening: 146.56, pricedAt: '2022-11-18T00:00:00.000Z' },
+        ],
+      },
+    });
   });
 
   test('getStockHistoryBySymbol - should return error if dates are not found', async () => {
@@ -98,6 +106,15 @@ describe('ApiController', () => {
     const result = await moockedController.getStockHistoryBySymbol('ibm', from, to);
 
     expect(result).toMatchObject([new NotFoundError({ from }), new NotFoundError({ to })]);
+  });
+
+  test('getStockHistoryBySymbol - should return error if stock_name is not found', async () => {
+    const from = '2022-11-18';
+    const to = '2022-11-22';
+    const stock_name = 'unknown';
+    const result = await moockedController.getStockHistoryBySymbol(stock_name, from, to);
+
+    expect(result).toMatchObject([new NotFoundError({ stock_name })]);
   });
 
   test('projectGains - should return gains', async () => {
@@ -117,5 +134,14 @@ describe('ApiController', () => {
         purchasedAt: '2022-11-22T00:00:00.000Z',
       },
     });
+  });
+
+  test('projectGains - should return correct and legible error when date is not found', async () => {
+    const purchasedAmount = '10';
+    const purchasedAt = '2022-11-25';
+
+    const result = await moockedController.projectGains('ibm', purchasedAmount, purchasedAt);
+
+    expect(result).toMatchObject([new NotFoundError({ purchasedAt })]);
   });
 });
