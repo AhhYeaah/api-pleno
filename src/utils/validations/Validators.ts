@@ -10,6 +10,7 @@ export enum ValidatationTypes {
   NOT_TODAY_OR_AFTER = 'today_or_after',
 }
 
+// eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace Validators {
   export function isNotEmpty(value: string) {
     //undefined, null, "" ou "   "
