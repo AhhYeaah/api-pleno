@@ -12,7 +12,12 @@
         "ecmaVersion": "latest",
         "sourceType": "module"
     },
+    "rules": {
+        "unused-imports/no-unused-imports": "error"
+    },
     "plugins": [
-        "@typescript-eslint"
-    ]
+        "@typescript-eslint",
+        "unused-imports"
+    ],
+    "root": true
 }
