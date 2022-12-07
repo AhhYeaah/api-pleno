@@ -5,5 +5,5 @@ export abstract class ApiResponse {
   result: EndpointsResponseTypes | null = null;
   errors: BaseError[] | null = null;
 
-  getStatusCode() {}
+  abstract getStatusCode(): number;
 }
