@@ -5,7 +5,7 @@ import { ValidatationTypes } from './Validators';
 type MultipleValidationInput = [ValidatationTypes, Record<string, any>][];
 
 export class ParameterValidator {
-  private static nameValidationMap: Record<string, Function> = {
+  private static nameValidationMap: Record<string, ((string: string[]) => boolean) | ((string: string) => boolean)> = {
     string: Validators.isNotEmpty,
     date: Validators.isValidDate,
     weekend: Validators.isNotWeekend,
